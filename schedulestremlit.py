@@ -29,7 +29,6 @@ def select_optimised_leave(interns, leave_preferences, start_date, end_date):
             assigned_weeks.add(second)
             final_leave.append({"name": name, "start": second})
         else:
-            # fallback random available week
             for d in pd.date_range(start=start_date, end=end_date - timedelta(days=6)):
                 if d not in assigned_weeks:
                     assigned_weeks.add(d)
@@ -42,7 +41,6 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
     date_range = pd.date_range(start=start_date, end=end_date)
     shifts = pd.DataFrame(index=date_range, columns=["Cover", "Late"])
 
-    # Initialize shift counts from previous or fresh
     shift_counts = defaultdict(lambda: {"Cover": 0, "Late": 0, "FreeWeekends": 0})
     if previous_summary is not None:
         for intern in previous_summary.index:
@@ -50,7 +48,6 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             shift_counts[intern]["Late"] = int(previous_summary.at[intern, "Late"])
             shift_counts[intern]["FreeWeekends"] = int(previous_summary.at[intern, "FreeWeekends"]) if "FreeWeekends" in previous_summary.columns else 0
 
-    # Build unavailable map from leave
     leave_map = defaultdict(set)
     leave_entries = []
     if leave_dates is not None:
@@ -61,7 +58,6 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             leave_map[name].update(days)
             leave_entries.append((name, start, start + timedelta(days=6)))
 
-    # Weekend & public holiday logic
     weekends = [d for d in date_range if d.weekday() in [5, 6]]
     holiday_days = [d for d in date_range if d in SA_PUBLIC_HOLIDAYS_2025]
     off_day_candidates = sorted(set(weekends + holiday_days))
@@ -103,7 +99,6 @@ def to_excel(roster_df, summary_df):
         summary_df.to_excel(writer, index=True, sheet_name='Summary')
     return output.getvalue()
 
-# ---------- Streamlit UI ----------
 st.set_page_config(page_title="Intern Roster Scheduler", layout="centered")
 st.markdown("""
     <style>
@@ -125,7 +120,6 @@ previous_summary = None
 if uploaded_file is not None:
     previous_summary = pd.read_csv(uploaded_file, index_col=0)
 
-# Leave input with preferences
 st.subheader("🌴 Leave Preferences (Each gets 1 week)")
 leave_preferences = {}
 intern_names_preview = [name.strip() for name in intern_input.split("\n") if name.strip()]
@@ -187,11 +181,6 @@ if st.button("🚀 Generate Roster"):
                     "Date": [day],
                     "EndDate": [day + pd.Timedelta(days=1)],
                     "ShiftType": [f"Leave ({choice_label})"],
-                    "Intern": [name]
-                })])
-                    "Date": [day],
-                    "EndDate": [day + pd.Timedelta(days=1)],
-                    "ShiftType": ["Leave"],
                     "Intern": [name]
                 })])
 
