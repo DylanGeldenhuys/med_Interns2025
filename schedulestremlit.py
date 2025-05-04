@@ -16,14 +16,11 @@ SA_PUBLIC_HOLIDAYS_2025 = set(pd.to_datetime(SA_PUBLIC_HOLIDAYS_2025))
 
 # ---------- Helper Functions ----------
 def select_optimised_leave(interns, leave_preferences, start_date, end_date):
-    assigned_weeks = {}  # week_start_date -> intern name
+    assigned_weeks = {}
     final_leave = []
-
-    # Build all Mondays in the range
     mondays = list(pd.date_range(start=start_date, end=end_date - timedelta(days=4), freq='W-MON'))
 
     for week_start in mondays:
-        # Find someone whose first or second choice matches this week and is unassigned
         candidates = []
         for name in interns:
             if name in [entry["name"] for entry in final_leave]:
@@ -34,7 +31,6 @@ def select_optimised_leave(interns, leave_preferences, start_date, end_date):
             elif prefs["second"] - timedelta(days=prefs["second"].weekday()) == week_start:
                 candidates.append((name, "Second"))
 
-        # Assign preferred candidate if available, else assign any unassigned person
         if candidates:
             name, choice = candidates[0]
             final_leave.append({"name": name, "start": week_start, "choice": choice})
@@ -63,7 +59,7 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
         for entry in leave_dates:
             name = entry["name"]
             start = entry["start"]
-            days = [start + timedelta(days=i) for i in range(7)]
+            days = [start + timedelta(days=i) for i in range(5)]
             leave_map[name].update(days)
             leave_entries.append({"name": name, "start": start, "end": start + timedelta(days=4), "choice": entry["choice"]})
 
@@ -85,15 +81,14 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             shifts.at[pair[1], "Cover"] = shifts.at[pair[1], "Late"] = intern
 
     for day in date_range:
-        # Skip assigning to those on leave
         available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
 
         if pd.isna(shifts.at[day, "Cover"]):
             cover_candidate = sorted(available, key=lambda i: shift_counts[i]["Cover"])[0]
             shifts.at[day, "Cover"] = cover_candidate
             shift_counts[cover_candidate]["Cover"] += 1
+
         available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
-                available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
 
         if pd.isna(shifts.at[day, "Late"]):
             late_candidate = sorted(available, key=lambda i: shift_counts[i]["Late"])[0]
@@ -103,7 +98,7 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
     summary = pd.DataFrame(shift_counts).T.sort_index()
     summary['LeaveChoice'] = summary.index.map(
         lambda name: next((entry["choice"] for entry in leave_entries if entry["name"] == name), "None")
-    ) for entry in leave_entries if entry[0] == name))
+    )
     summary["TotalHours"] = summary["Cover"] * 24 + summary["Late"] * 12
     return shifts, summary, leave_entries
 
@@ -115,14 +110,6 @@ def to_excel(roster_df, summary_df):
     return output.getvalue()
 
 st.set_page_config(page_title="Intern Roster Scheduler", layout="centered")
-st.markdown("""
-    <style>
-    .main { background-color: #f0f2f6; }
-    h1 { color: #004466; }
-    .stButton>button { background-color: #0073e6; color: white; }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🩺 Intern Shift Scheduler")
 st.markdown("Schedule Cover (24h) and Late (12h) shifts fairly, with public holidays and leave.")
 
@@ -209,9 +196,21 @@ if st.button("🚀 Generate Roster"):
             y="Intern",
             color="ShiftType",
             title="Roster Calendar",
-            color_discrete_map={"Cover": "#004466", "Late": "#3399ff", "Leave (First)": "#e67676", "Leave (Second)": "#f4b400"}
+            color_discrete_map={"Cover": "#004466", "Late": "#3399ff", "Leave (First)": "#e67676", "Leave (Second)": "#f4b400", "Leave (Assigned)": "#999999"},
+            height=600
+        )": "#e67676", "Leave (Second)": "#f4b400", "Leave (Assigned)": "#999999"}
         )
         fig3.update_yaxes(autorange="reversed")
+        fig3.update_layout(
+            xaxis=dict(
+                tickformat="%a
+%d-%b",
+                tickangle=-45,
+                dtick=86400000.0 * 1  # daily ticks
+            ),
+            margin=dict(l=20, r=20, t=40, b=80),
+            bargap=0.2
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
 st.markdown("""
