@@ -216,17 +216,15 @@ if st.button("🚀 Generate Roster"):
     margin=dict(l=20, r=20, t=40, b=80),
     bargap=0.2
 )
-        fig3.update_layout(
-            xaxis=dict(
-                tickformat="%a
-%d-%b",
-                tickangle=-45,
-                dtick=86400000.0 * 1  # daily ticks
-            ),
-            margin=dict(l=20, r=20, t=40, b=80),
-            bargap=0.2
-        )
-        st.plotly_chart(fig3, use_container_width=True)
+    fig3.update_layout(
+        xaxis=dict(
+            tickformat="%a %d-%b",  # Day + Date, no newlines
+            tickangle=-45,
+            dtick=86400000.0
+        ),
+        margin=dict(l=20, r=20, t=40, b=80),
+        bargap=0.2
+    )
 
 st.markdown("""
 ---
