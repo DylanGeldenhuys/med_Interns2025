@@ -15,6 +15,28 @@ SA_PUBLIC_HOLIDAYS_2025 = [
 SA_PUBLIC_HOLIDAYS_2025 = set(pd.to_datetime(SA_PUBLIC_HOLIDAYS_2025))
 
 # ---------- Helper Functions ----------
+def select_optimised_leave(interns, leave_preferences, start_date, end_date):
+    assigned_weeks = set()
+    final_leave = []
+
+    for name in interns:
+        first = leave_preferences[name]["first"]
+        second = leave_preferences[name]["second"]
+        if first not in assigned_weeks and start_date <= first <= end_date - timedelta(days=6):
+            assigned_weeks.add(first)
+            final_leave.append({"name": name, "start": first})
+        elif second not in assigned_weeks and start_date <= second <= end_date - timedelta(days=6):
+            assigned_weeks.add(second)
+            final_leave.append({"name": name, "start": second})
+        else:
+            # fallback random available week
+            for d in pd.date_range(start=start_date, end=end_date - timedelta(days=6)):
+                if d not in assigned_weeks:
+                    assigned_weeks.add(d)
+                    final_leave.append({"name": name, "start": d})
+                    break
+    return final_leave
+
 def generate_roster(interns, start_date, end_date, previous_summary=None, leave_dates=None, seed=42):
     random.seed(seed)
     date_range = pd.date_range(start=start_date, end=end_date)
@@ -70,6 +92,7 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             shift_counts[late_candidate]["Late"] += 1
 
     summary = pd.DataFrame(shift_counts).T.sort_index()
+    summary['LeaveChoice'] = summary.index.map(lambda name: next(("First" if entry[1] == leave_preferences[name]["first"] else "Second") for entry in leave_entries if entry[0] == name))
     summary["TotalHours"] = summary["Cover"] * 24 + summary["Late"] * 12
     return shifts, summary, leave_entries
 
@@ -102,17 +125,16 @@ previous_summary = None
 if uploaded_file is not None:
     previous_summary = pd.read_csv(uploaded_file, index_col=0)
 
-# Leave input
-st.subheader("🌴 Leave Scheduling")
-st.markdown("Each person gets 1 full week off. Add leave per intern below.")
-leave_dates = []
+# Leave input with preferences
+st.subheader("🌴 Leave Preferences (Each gets 1 week)")
+leave_preferences = {}
 intern_names_preview = [name.strip() for name in intern_input.split("\n") if name.strip()]
 if intern_names_preview:
     for name in intern_names_preview:
-        with st.expander(f"📆 Leave for {name}"):
-            leave_start = st.date_input(f"Start of leave week for {name}", value=start_date, key=f"leave_{name}")
-            if start_date <= leave_start <= end_date - timedelta(days=6):
-                leave_dates.append({"name": name, "start": leave_start})
+        with st.expander(f"🗓️ Leave preferences for {name}"):
+            first = st.date_input(f"First choice leave week for {name}", value=start_date, key=f"leave_first_{name}")
+            second = st.date_input(f"Second choice leave week for {name}", value=start_date + timedelta(days=7), key=f"leave_second_{name}")
+            leave_preferences[name] = {"first": first, "second": second}
 
 if st.button("🚀 Generate Roster"):
     interns = intern_names_preview
@@ -121,7 +143,8 @@ if st.button("🚀 Generate Roster"):
     elif start_date > end_date:
         st.warning("⚠️ Start date must be before end date.")
     else:
-        roster_df, summary_df, leave_entries = generate_roster(interns, start_date, end_date, previous_summary, leave_dates)
+        optimised_leave = select_optimised_leave(interns, leave_preferences, start_date, end_date)
+        roster_df, summary_df, leave_entries = generate_roster(interns, start_date, end_date, previous_summary, optimised_leave)
 
         st.subheader("📋 Roster Table")
         st.dataframe(roster_df)
@@ -136,7 +159,6 @@ if st.button("🚀 Generate Roster"):
         st.subheader("📊 Summary of Shifts")
         st.dataframe(summary_df)
 
-        # Bar chart: Total Hours
         st.subheader("🕒 Total Hours per Intern")
         fig1, ax1 = plt.subplots()
         summary_df.sort_values("TotalHours", ascending=True)["TotalHours"].plot(
@@ -145,7 +167,6 @@ if st.button("🚀 Generate Roster"):
         ax1.set_ylabel("Intern")
         st.pyplot(fig1)
 
-        # Bar chart: Free Weekends
         st.subheader("🌴 Free Weekends per Intern")
         fig2, ax2 = plt.subplots()
         summary_df.sort_values("FreeWeekends", ascending=True)["FreeWeekends"].plot(
@@ -154,27 +175,39 @@ if st.button("🚀 Generate Roster"):
         ax2.set_ylabel("Intern")
         st.pyplot(fig2)
 
-        # Visual Calendar
         st.subheader("📆 Visual Calendar of Shifts and Leave")
-        calendar_df = roster_df.copy()
-        calendar_df = calendar_df.reset_index().melt(id_vars=["index"], value_vars=["Cover", "Late"], var_name="ShiftType", value_name="Intern")
+        calendar_df = roster_df.copy().reset_index().melt(id_vars=["index"], value_vars=["Cover", "Late"], var_name="ShiftType", value_name="Intern")
         calendar_df.rename(columns={"index": "Date"}, inplace=True)
+        calendar_df["EndDate"] = calendar_df["Date"] + pd.Timedelta(days=1)
+
         for name, start, end in leave_entries:
-            calendar_df = pd.concat([calendar_df, pd.DataFrame({"Date": pd.date_range(start, end), "ShiftType": "Leave", "Intern": name})])
+            choice_label = "First" if start == leave_preferences[name]["first"] else "Second"
+            for day in pd.date_range(start, end):
+                calendar_df = pd.concat([calendar_df, pd.DataFrame({
+                    "Date": [day],
+                    "EndDate": [day + pd.Timedelta(days=1)],
+                    "ShiftType": [f"Leave ({choice_label})"],
+                    "Intern": [name]
+                })])
+                    "Date": [day],
+                    "EndDate": [day + pd.Timedelta(days=1)],
+                    "ShiftType": ["Leave"],
+                    "Intern": [name]
+                })])
 
         fig3 = px.timeline(
             calendar_df,
             x_start="Date",
-            x_end="Date",
+            x_end="EndDate",
             y="Intern",
             color="ShiftType",
             title="Roster Calendar",
-            color_discrete_map={"Cover": "#004466", "Late": "#3399ff", "Leave": "#e67676"}
+            color_discrete_map={"Cover": "#004466", "Late": "#3399ff", "Leave (First)": "#e67676", "Leave (Second)": "#f4b400"}
         )
         fig3.update_yaxes(autorange="reversed")
         st.plotly_chart(fig3, use_container_width=True)
 
 st.markdown("""
 ---
-💡 *Created with ❤️ by Guenivere's big willy boyfriend*
+💡 *Created with ❤️ by Dylan*
 """)
