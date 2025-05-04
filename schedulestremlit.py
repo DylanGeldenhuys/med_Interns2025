@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from io import BytesIO
 import matplotlib.pyplot as plt
+import plotly.express as px
 
 # ---------- South African Public Holidays 2025 ----------
 SA_PUBLIC_HOLIDAYS_2025 = [
@@ -14,7 +15,7 @@ SA_PUBLIC_HOLIDAYS_2025 = [
 SA_PUBLIC_HOLIDAYS_2025 = set(pd.to_datetime(SA_PUBLIC_HOLIDAYS_2025))
 
 # ---------- Helper Functions ----------
-def generate_roster(interns, start_date, end_date, previous_summary=None, seed=42):
+def generate_roster(interns, start_date, end_date, previous_summary=None, leave_dates=None, seed=42):
     random.seed(seed)
     date_range = pd.date_range(start=start_date, end=end_date)
     shifts = pd.DataFrame(index=date_range, columns=["Cover", "Late"])
@@ -27,18 +28,29 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, seed=4
             shift_counts[intern]["Late"] = int(previous_summary.at[intern, "Late"])
             shift_counts[intern]["FreeWeekends"] = int(previous_summary.at[intern, "FreeWeekends"]) if "FreeWeekends" in previous_summary.columns else 0
 
+    # Build unavailable map from leave
+    leave_map = defaultdict(set)
+    leave_entries = []
+    if leave_dates is not None:
+        for entry in leave_dates:
+            name = entry["name"]
+            start = entry["start"]
+            days = [start + timedelta(days=i) for i in range(7)]
+            leave_map[name].update(days)
+            leave_entries.append((name, start, start + timedelta(days=6)))
+
     # Weekend & public holiday logic
     weekends = [d for d in date_range if d.weekday() in [5, 6]]
     holiday_days = [d for d in date_range if d in SA_PUBLIC_HOLIDAYS_2025]
-    all_off_days = sorted(set(weekends + holiday_days))
+    off_day_candidates = sorted(set(weekends + holiday_days))
     off_day_pairs = [
-        (d, d + timedelta(days=1)) for d in all_off_days if d.weekday() == 5 and (d + timedelta(days=1)) in all_off_days
+        (d, d + timedelta(days=1)) for d in off_day_candidates
+        if d.weekday() == 5 and (d + timedelta(days=1)) in off_day_candidates
     ]
     random.shuffle(off_day_pairs)
 
-    # Assign off-day pairs to interns
     for pair in off_day_pairs:
-        free_interns = [i for i in interns if i not in shifts.loc[pair[0]:pair[1]].values]
+        free_interns = [i for i in interns if i not in shifts.loc[pair[0]:pair[1]].values and not (pair[0] in leave_map[i] or pair[1] in leave_map[i])]
         if free_interns:
             intern = min(free_interns, key=lambda i: shift_counts[i]["FreeWeekends"])
             shift_counts[intern]["FreeWeekends"] += 1
@@ -46,25 +58,26 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, seed=4
             shifts.at[pair[1], "Cover"] = shifts.at[pair[1], "Late"] = intern
 
     for day in date_range:
+        available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
         if pd.isna(shifts.at[day, "Cover"]):
-            available = [i for i in interns if i not in shifts.loc[day].values]
             cover_candidate = sorted(available, key=lambda i: shift_counts[i]["Cover"])[0]
             shifts.at[day, "Cover"] = cover_candidate
             shift_counts[cover_candidate]["Cover"] += 1
+        available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
         if pd.isna(shifts.at[day, "Late"]):
-            available = [i for i in interns if i not in shifts.loc[day].values]
             late_candidate = sorted(available, key=lambda i: shift_counts[i]["Late"])[0]
             shifts.at[day, "Late"] = late_candidate
             shift_counts[late_candidate]["Late"] += 1
 
     summary = pd.DataFrame(shift_counts).T.sort_index()
     summary["TotalHours"] = summary["Cover"] * 24 + summary["Late"] * 12
-    return shifts, summary
+    return shifts, summary, leave_entries
 
-def to_excel(df):
+def to_excel(roster_df, summary_df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=True, sheet_name='Roster')
+        roster_df.to_excel(writer, index=True, sheet_name='Roster')
+        summary_df.to_excel(writer, index=True, sheet_name='Summary')
     return output.getvalue()
 
 # ---------- Streamlit UI ----------
@@ -78,7 +91,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🩺 Intern Shift Scheduler")
-st.markdown("Schedule Cover (24h) and Late (12h) shifts, fairly and simply.")
+st.markdown("Schedule Cover (24h) and Late (12h) shifts fairly, with public holidays and leave.")
 
 intern_input = st.text_area("👥 Enter intern names (one per line):")
 start_date = st.date_input("📅 Start Date", datetime.today())
@@ -89,21 +102,33 @@ previous_summary = None
 if uploaded_file is not None:
     previous_summary = pd.read_csv(uploaded_file, index_col=0)
 
+# Leave input
+st.subheader("🌴 Leave Scheduling")
+st.markdown("Each person gets 1 full week off. Add leave per intern below.")
+leave_dates = []
+intern_names_preview = [name.strip() for name in intern_input.split("\n") if name.strip()]
+if intern_names_preview:
+    for name in intern_names_preview:
+        with st.expander(f"📆 Leave for {name}"):
+            leave_start = st.date_input(f"Start of leave week for {name}", value=start_date, key=f"leave_{name}")
+            if start_date <= leave_start <= end_date - timedelta(days=6):
+                leave_dates.append({"name": name, "start": leave_start})
+
 if st.button("🚀 Generate Roster"):
-    interns = [name.strip() for name in intern_input.split("\n") if name.strip()]
+    interns = intern_names_preview
     if not interns:
         st.warning("⚠️ Please enter at least one intern.")
     elif start_date > end_date:
         st.warning("⚠️ Start date must be before end date.")
     else:
-        roster_df, summary_df = generate_roster(interns, start_date, end_date, previous_summary)
+        roster_df, summary_df, leave_entries = generate_roster(interns, start_date, end_date, previous_summary, leave_dates)
 
         st.subheader("📋 Roster Table")
         st.dataframe(roster_df)
 
         st.download_button(
-            label="📥 Download Roster as Excel",
-            data=to_excel(roster_df),
+            label="📥 Download Full Excel File",
+            data=to_excel(roster_df, summary_df),
             file_name="intern_roster.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -128,6 +153,26 @@ if st.button("🚀 Generate Roster"):
         ax2.set_xlabel("Free Weekends")
         ax2.set_ylabel("Intern")
         st.pyplot(fig2)
+
+        # Visual Calendar
+        st.subheader("📆 Visual Calendar of Shifts and Leave")
+        calendar_df = roster_df.copy()
+        calendar_df = calendar_df.reset_index().melt(id_vars=["index"], value_vars=["Cover", "Late"], var_name="ShiftType", value_name="Intern")
+        calendar_df.rename(columns={"index": "Date"}, inplace=True)
+        for name, start, end in leave_entries:
+            calendar_df = pd.concat([calendar_df, pd.DataFrame({"Date": pd.date_range(start, end), "ShiftType": "Leave", "Intern": name})])
+
+        fig3 = px.timeline(
+            calendar_df,
+            x_start="Date",
+            x_end="Date",
+            y="Intern",
+            color="ShiftType",
+            title="Roster Calendar",
+            color_discrete_map={"Cover": "#004466", "Late": "#3399ff", "Leave": "#e67676"}
+        )
+        fig3.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig3, use_container_width=True)
 
 st.markdown("""
 ---
