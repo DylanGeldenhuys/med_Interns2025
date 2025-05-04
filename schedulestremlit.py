@@ -208,14 +208,15 @@ if st.button("🚀 Generate Roster"):
 
         fig3.update_yaxes(autorange="reversed")
         fig3.update_layout(
-            xaxis=dict(
-                tickformat=\"%a\n%d-%b\",
-                tickangle=-45,
-                dtick=86400000.0
-            ),
-            margin=dict(l=20, r=20, t=40, b=80),
-            bargap=0.2
-        )
+    xaxis=dict(
+        tickformat="%a
+%d-%b",  # Day name and date on two lines
+        tickangle=-45,
+        dtick=86400000.0  # 1 day in milliseconds
+    ),
+    margin=dict(l=20, r=20, t=40, b=80),
+    bargap=0.2
+)
         fig3.update_layout(
             xaxis=dict(
                 tickformat="%a
