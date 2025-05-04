@@ -22,14 +22,19 @@ def select_optimised_leave(interns, leave_preferences, start_date, end_date):
     for name in interns:
         first = leave_preferences[name]["first"]
         second = leave_preferences[name]["second"]
-        if first not in assigned_weeks and start_date <= first <= end_date - timedelta(days=6):
-            assigned_weeks.add(first)
-            final_leave.append({"name": name, "start": first})
-        elif second not in assigned_weeks and start_date <= second <= end_date - timedelta(days=6):
-            assigned_weeks.add(second)
-            final_leave.append({"name": name, "start": second})
+
+        week1 = first - timedelta(days=first.weekday())  # Monday of that week
+        week2 = second - timedelta(days=second.weekday())
+
+        if week1 not in assigned_weeks and start_date <= first <= end_date - timedelta(days=6):
+            assigned_weeks.add(week1)
+            final_leave.append({"name": name, "start": week1})
+        elif week2 not in assigned_weeks and start_date <= second <= end_date - timedelta(days=6):
+            assigned_weeks.add(week2)
+            final_leave.append({"name": name, "start": week2})
         else:
-            for d in pd.date_range(start=start_date, end=end_date - timedelta(days=6)):
+            # fallback: assign first unassigned week in range
+            for d in pd.date_range(start=start_date, end=end_date - timedelta(days=6), freq='W-MON'):
                 if d not in assigned_weeks:
                     assigned_weeks.add(d)
                     final_leave.append({"name": name, "start": d})
