@@ -6,22 +6,38 @@ from collections import defaultdict
 from io import BytesIO
 import matplotlib.pyplot as plt
 
+# ---------- South African Public Holidays 2025 ----------
+SA_PUBLIC_HOLIDAYS_2025 = [
+    "2025-01-01", "2025-03-21", "2025-04-18", "2025-04-21", "2025-04-27", "2025-05-01",
+    "2025-06-16", "2025-08-09", "2025-09-24", "2025-12-16", "2025-12-25", "2025-12-26"
+]
+SA_PUBLIC_HOLIDAYS_2025 = set(pd.to_datetime(SA_PUBLIC_HOLIDAYS_2025))
+
 # ---------- Helper Functions ----------
-def generate_roster(interns, start_date, end_date, seed=42):
+def generate_roster(interns, start_date, end_date, previous_summary=None, seed=42):
     random.seed(seed)
     date_range = pd.date_range(start=start_date, end=end_date)
     shifts = pd.DataFrame(index=date_range, columns=["Cover", "Late"])
+
+    # Initialize shift counts from previous or fresh
     shift_counts = defaultdict(lambda: {"Cover": 0, "Late": 0, "FreeWeekends": 0})
+    if previous_summary is not None:
+        for intern in previous_summary.index:
+            shift_counts[intern]["Cover"] = int(previous_summary.at[intern, "Cover"])
+            shift_counts[intern]["Late"] = int(previous_summary.at[intern, "Late"])
+            shift_counts[intern]["FreeWeekends"] = int(previous_summary.at[intern, "FreeWeekends"]) if "FreeWeekends" in previous_summary.columns else 0
 
-    # Weekend pairs: Saturday & Sunday
+    # Weekend & public holiday logic
     weekends = [d for d in date_range if d.weekday() in [5, 6]]
-    weekend_pairs = [
-        (d, d + timedelta(days=1))
-        for d in weekends if d.weekday() == 5 and (d + timedelta(days=1)) in date_range
+    holiday_days = [d for d in date_range if d in SA_PUBLIC_HOLIDAYS_2025]
+    all_off_days = sorted(set(weekends + holiday_days))
+    off_day_pairs = [
+        (d, d + timedelta(days=1)) for d in all_off_days if d.weekday() == 5 and (d + timedelta(days=1)) in all_off_days
     ]
-    random.shuffle(weekend_pairs)
+    random.shuffle(off_day_pairs)
 
-    for pair in weekend_pairs:
+    # Assign off-day pairs to interns
+    for pair in off_day_pairs:
         free_interns = [i for i in interns if i not in shifts.loc[pair[0]:pair[1]].values]
         if free_interns:
             intern = min(free_interns, key=lambda i: shift_counts[i]["FreeWeekends"])
@@ -68,6 +84,11 @@ intern_input = st.text_area("👥 Enter intern names (one per line):")
 start_date = st.date_input("📅 Start Date", datetime.today())
 end_date = st.date_input("📅 End Date", datetime.today() + timedelta(days=30))
 
+uploaded_file = st.file_uploader("📤 Upload Previous Summary (optional, CSV only)", type=["csv"])
+previous_summary = None
+if uploaded_file is not None:
+    previous_summary = pd.read_csv(uploaded_file, index_col=0)
+
 if st.button("🚀 Generate Roster"):
     interns = [name.strip() for name in intern_input.split("\n") if name.strip()]
     if not interns:
@@ -75,7 +96,7 @@ if st.button("🚀 Generate Roster"):
     elif start_date > end_date:
         st.warning("⚠️ Start date must be before end date.")
     else:
-        roster_df, summary_df = generate_roster(interns, start_date, end_date)
+        roster_df, summary_df = generate_roster(interns, start_date, end_date, previous_summary)
 
         st.subheader("📋 Roster Table")
         st.dataframe(roster_df)
@@ -110,5 +131,5 @@ if st.button("🚀 Generate Roster"):
 
 st.markdown("""
 ---
-💡 *Created with ❤️ by Dylan*
+💡 *Created with ❤️ by Guenivere's big willy boyfriend*
 """)
