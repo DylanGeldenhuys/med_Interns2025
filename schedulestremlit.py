@@ -206,14 +206,15 @@ if st.button("🚀 Generate Roster"):
             height=600
         )
 
-        fig3.update_yaxes(autorange="reversed")
+        fig3.update_yaxes(autorange="reversed", title="Intern")
         fig3.update_layout(
     xaxis=dict(
         tickformat="%a %d-%b",
         tickangle=-45,
-        dtick=86400000.0
+        dtick=86400000.0,
+        side="top"
     ),
-    margin=dict(l=20, r=20, t=40, b=80),
+    margin=dict(l=20, r=20, t=80, b=40),
     bargap=0.2
 )
         fig3.update_layout(
