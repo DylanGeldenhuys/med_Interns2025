@@ -16,24 +16,33 @@ SA_PUBLIC_HOLIDAYS_2025 = set(pd.to_datetime(SA_PUBLIC_HOLIDAYS_2025))
 
 # ---------- Helper Functions ----------
 def select_optimised_leave(interns, leave_preferences, start_date, end_date):
-    assigned_weeks = set()
+    assigned_weeks = {}  # week_start_date -> intern name
     final_leave = []
 
-    for name in interns:
-        first = leave_preferences[name]["first"]
-        second = leave_preferences[name]["second"]
-        if first not in assigned_weeks and start_date <= first <= end_date - timedelta(days=6):
-            assigned_weeks.add(first)
-            final_leave.append({"name": name, "start": first})
-        elif second not in assigned_weeks and start_date <= second <= end_date - timedelta(days=6):
-            assigned_weeks.add(second)
-            final_leave.append({"name": name, "start": second})
+    # Build all Mondays in the range
+    mondays = list(pd.date_range(start=start_date, end=end_date - timedelta(days=4), freq='W-MON'))
+
+    for week_start in mondays:
+        # Find someone whose first or second choice matches this week and is unassigned
+        candidates = []
+        for name in interns:
+            if name in [entry["name"] for entry in final_leave]:
+                continue
+            prefs = leave_preferences[name]
+            if prefs["first"] - timedelta(days=prefs["first"].weekday()) == week_start:
+                candidates.append((name, "First"))
+            elif prefs["second"] - timedelta(days=prefs["second"].weekday()) == week_start:
+                candidates.append((name, "Second"))
+
+        # Assign preferred candidate if available, else assign any unassigned person
+        if candidates:
+            name, choice = candidates[0]
+            final_leave.append({"name": name, "start": week_start, "choice": choice})
         else:
-            for d in pd.date_range(start=start_date, end=end_date - timedelta(days=6)):
-                if d not in assigned_weeks:
-                    assigned_weeks.add(d)
-                    final_leave.append({"name": name, "start": d})
-                    break
+            remaining = [name for name in interns if name not in [entry["name"] for entry in final_leave]]
+            if remaining:
+                final_leave.append({"name": remaining[0], "start": week_start, "choice": "Assigned"})
+
     return final_leave
 
 def generate_roster(interns, start_date, end_date, previous_summary=None, leave_dates=None, seed=42):
@@ -56,7 +65,7 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             start = entry["start"]
             days = [start + timedelta(days=i) for i in range(7)]
             leave_map[name].update(days)
-            leave_entries.append((name, start, start + timedelta(days=6)))
+            leave_entries.append({"name": name, "start": start, "end": start + timedelta(days=4), "choice": entry["choice"]})
 
     weekends = [d for d in date_range if d.weekday() in [5, 6]]
     holiday_days = [d for d in date_range if d in SA_PUBLIC_HOLIDAYS_2025]
@@ -76,19 +85,25 @@ def generate_roster(interns, start_date, end_date, previous_summary=None, leave_
             shifts.at[pair[1], "Cover"] = shifts.at[pair[1], "Late"] = intern
 
     for day in date_range:
+        # Skip assigning to those on leave
         available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
+
         if pd.isna(shifts.at[day, "Cover"]):
             cover_candidate = sorted(available, key=lambda i: shift_counts[i]["Cover"])[0]
             shifts.at[day, "Cover"] = cover_candidate
             shift_counts[cover_candidate]["Cover"] += 1
         available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
+                available = [i for i in interns if day not in leave_map[i] and i not in shifts.loc[day].values]
+
         if pd.isna(shifts.at[day, "Late"]):
             late_candidate = sorted(available, key=lambda i: shift_counts[i]["Late"])[0]
             shifts.at[day, "Late"] = late_candidate
             shift_counts[late_candidate]["Late"] += 1
 
     summary = pd.DataFrame(shift_counts).T.sort_index()
-    summary['LeaveChoice'] = summary.index.map(lambda name: next(("First" if entry[1] == leave_preferences[name]["first"] else "Second") for entry in leave_entries if entry[0] == name))
+    summary['LeaveChoice'] = summary.index.map(
+        lambda name: next((entry["choice"] for entry in leave_entries if entry["name"] == name), "None")
+    ) for entry in leave_entries if entry[0] == name))
     summary["TotalHours"] = summary["Cover"] * 24 + summary["Late"] * 12
     return shifts, summary, leave_entries
 
@@ -174,8 +189,11 @@ if st.button("🚀 Generate Roster"):
         calendar_df.rename(columns={"index": "Date"}, inplace=True)
         calendar_df["EndDate"] = calendar_df["Date"] + pd.Timedelta(days=1)
 
-        for name, start, end in leave_entries:
-            choice_label = "First" if start == leave_preferences[name]["first"] else "Second"
+        for leave_entry in leave_entries:
+            name = leave_entry["name"]
+            start = leave_entry["start"]
+            end = leave_entry["end"]
+            choice_label = leave_entry["choice"]
             for day in pd.date_range(start, end):
                 calendar_df = pd.concat([calendar_df, pd.DataFrame({
                     "Date": [day],
