@@ -209,8 +209,7 @@ if st.button("🚀 Generate Roster"):
         fig3.update_yaxes(autorange="reversed")
         fig3.update_layout(
             xaxis=dict(
-                tickformat="%a
-%d-%b",
+                tickformat="%a\n%d-%b",
                 tickangle=-45,
                 dtick=86400000.0
             ),
